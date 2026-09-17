@@ -3,11 +3,37 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from auth import require_service_token
+from geometry import knee_angle, knee_drift, landmarks_visible, torso_lean
 from llm import fallback_coaching, openrouter_coaching
 from registry import REGISTRY, get_exercise
-from schemas import AnalyzeOut, CoachOut, VoiceIn, VoiceOut, WorkoutSummaryIn
+from schemas import (
+    AnalyzeOut,
+    CoachOut,
+    PoseIn,
+    PoseOut,
+    VoiceIn,
+    VoiceOut,
+    WorkoutSummaryIn,
+)
 
 router = APIRouter(prefix='/ai')
+
+
+@router.post('/pose/analyze', response_model=PoseOut)
+async def pose_analyze(
+    payload: PoseIn, _auth: None = Depends(require_service_token)
+) -> PoseOut:
+    # Rule-based landmark mirror of the browser engine. Accepts one frame of
+    # landmarks (never an image) for validation and future server-side checks.
+    lm = [p.model_dump() for p in payload.landmarks]
+    if not landmarks_visible(lm):
+        return PoseOut(visible=False, kneeAngle=180.0, torsoLean=0.0, kneeDrift=0.0)
+    return PoseOut(
+        visible=True,
+        kneeAngle=round(knee_angle(lm), 1),
+        torsoLean=round(torso_lean(lm), 1),
+        kneeDrift=round(knee_drift(lm), 3),
+    )
 
 
 @router.post('/analyze', response_model=AnalyzeOut)

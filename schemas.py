@@ -36,3 +36,22 @@ class VoiceIn(BaseModel):
 class VoiceOut(BaseModel):
     text: str
     audioUrl: str | None = None
+
+
+class Landmark(BaseModel):
+    x: float
+    y: float
+    visibility: float | None = None
+
+
+class PoseIn(BaseModel):
+    # One frame of BlazePose landmarks (33 for full pose; only the 8 the
+    # geometry reads are required to be present at their indices).
+    landmarks: list[Landmark] = Field(min_length=29)
+
+
+class PoseOut(BaseModel):
+    visible: bool
+    kneeAngle: float
+    torsoLean: float
+    kneeDrift: float
