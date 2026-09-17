@@ -1,60 +1,68 @@
-"""AI endpoints (spec section 9). All bodies are structured JSON, never video.
+"""AI endpoints. Structured JSON in/out - never video, never per-frame."""
 
-Stubs return the contracted shape until Phase 6/7 fills them in.
-"""
+from fastapi import APIRouter, Depends, HTTPException
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from auth import require_service_token
+from llm import fallback_coaching, openrouter_coaching
+from registry import REGISTRY, get_exercise
+from schemas import AnalyzeOut, CoachOut, VoiceIn, VoiceOut, WorkoutSummaryIn
 
 router = APIRouter(prefix='/ai')
 
 
-class WorkoutSummaryIn(BaseModel):
-    exercise: str
-    totalReps: int
-    goodReps: int
-    badReps: int
-    averageScore: float
-    issues: dict[str, int] = {}
-    duration: int = 0
-
-
-class CoachOut(BaseModel):
-    summary: str
-    strengths: list[str] = []
-    improvements: list[str] = []
-    nextWorkoutAdvice: str = ''
-    voiceMessage: str = ''
-
-
-@router.post('/analyze')
-def analyze(payload: dict) -> dict:
-    # ponytail: stub until the browser MVP proves out what must move server-side.
-    return {'received': payload, 'score': None, 'issues': []}
-
-
-@router.post('/workout-summary')
-def workout_summary(payload: WorkoutSummaryIn) -> CoachOut:
-    return CoachOut(
-        summary='stub',
-        voiceMessage='Workout logged. Keep going.',
+@router.post('/analyze', response_model=AnalyzeOut)
+async def analyze(
+    payload: WorkoutSummaryIn, _auth: None = Depends(require_service_token)
+) -> AnalyzeOut:
+    top_issue = max(payload.issues, key=lambda k: payload.issues[k], default=None)
+    if payload.averageScore >= 85:
+        quality = 'solid'
+    elif payload.averageScore >= 65:
+        quality = 'needs_work'
+    else:
+        quality = 'poor'
+    return AnalyzeOut(
+        exercise=payload.exercise,
+        quality=quality,
+        averageScore=payload.averageScore,
+        mainIssue=top_issue,
+        reps=payload.totalReps,
     )
 
 
-@router.post('/coach')
-def coach(payload: WorkoutSummaryIn) -> CoachOut:
-    return CoachOut(
-        summary='stub',
-        voiceMessage='Workout logged. Keep going.',
-    )
+@router.post('/workout-summary', response_model=CoachOut)
+async def workout_summary(
+    payload: WorkoutSummaryIn, _auth: None = Depends(require_service_token)
+) -> CoachOut:
+    return await openrouter_coaching(payload)
 
 
-@router.post('/voice')
-def voice(payload: dict) -> dict:
-    # ponytail: cloud TTS behind this endpoint later; browser SpeechSynthesis first.
-    return {'received': payload, 'audioUrl': None}
+@router.post('/coach', response_model=CoachOut)
+async def coach(
+    payload: WorkoutSummaryIn, _auth: None = Depends(require_service_token)
+) -> CoachOut:
+    # Alias kept for the spec's endpoint list; same contract as workout-summary.
+    if payload.totalReps == 0 and not payload.issues:
+        return fallback_coaching(payload)
+    return await openrouter_coaching(payload)
+
+
+@router.post('/voice', response_model=VoiceOut)
+async def voice(payload: VoiceIn, _auth: None = Depends(require_service_token)) -> VoiceOut:
+    # ponytail: cloud TTS later; the browser speaks this text today.
+    return VoiceOut(text=payload.text)
 
 
 @router.get('/exercises/{exercise_id}')
-def exercise(exercise_id: str) -> dict:
-    return {'id': exercise_id, 'analyzer': None}
+async def exercise(
+    exercise_id: str, _auth: None = Depends(require_service_token)
+) -> dict:
+    entry = get_exercise(exercise_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail='Unknown exercise.')
+    return entry
+
+
+@router.get('/exercises')
+async def exercise_list(_auth: None = Depends(require_service_token)) -> dict:
+    return {'exercises': list(REGISTRY.keys())}
